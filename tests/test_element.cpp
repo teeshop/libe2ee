@@ -6,69 +6,117 @@
 //  Copyright © 2018 T-Systems. All rights reserved.
 //
 
-#include <afgh/objects/Pairing.hpp>
-#include <afgh/objects/Element.hpp>
-#include <afgh/objects/PbcObjectImpl.hpp>
-#include <afgh/ObjectCatalog.hpp>
-#include <afgh/objects/KeyPair.hpp>
-#include <afgh/objects/Tuple.hpp>
-#include "test_element.hpp"
-#include "gtest/gtest.h"
+#include <string>
 #include <iostream>
-#include <cstring>
-#include <strings.h>
 #include <cmath>
+#include <catch.hpp>
 #include <boost/uuid/uuid.hpp>
+#include <e2ee/objects/Pairing.hpp>
+#include <e2ee/objects/Element.hpp>
+#include <e2ee/objects/PbcObjectImpl.hpp>
+#include <e2ee/PbcContext.hpp>
+#include <e2ee/objects/KeyPair.hpp>
+#include <e2ee/objects/Tuple.hpp>
+#include <e2ee/objects/CurveField.hpp>
 
+template<class T>
+void testJsonExport(std::shared_ptr<T> obj1, bool show = false) {
 
-TEST_F(ElementTest, TestElementIdUnambiguity) {
-  using namespace boost::uuids;
-  const uuid& id = global->g()->getId();
-  const uuid& id2 = afgh::PbcObjectImpl<struct element_s>::idOf(global->g()->get());
-  ASSERT_EQ(id, id2);
-}
+  static_assert(std::is_base_of<e2ee::PbcComparable<T>, T>::value);
+  /*
+   * keep shared_ptr, because otherwise clear() will get rid of obj1
+   */
 
-template <class T>
-void testJsonExport(std::shared_ptr<T> obj1) {
   std::string json = obj1->exportJson();
-  std::cout << json << std::endl;
-  std::shared_ptr<afgh::ObjectCatalog> catalog = afgh::ObjectCatalog::getInstance();
+  if (show) {
+    std::cout << json << std::endl;
+  }
+  std::shared_ptr<e2ee::PbcContext> catalog = e2ee::PbcContext::createInstance();
+  catalog->clear();
   catalog->populate(json);
-  std::shared_ptr<afgh::PbcObject> obj2 = catalog->root();
-  
-  ASSERT_EQ(*obj1, *obj2);
+  auto obj2 = catalog->root();
+
+  if (show) {
+    std::cout << obj2->exportJson() << std::endl;
+  }
+
+  REQUIRE(*obj1 == dynamic_cast<const T &>(*obj2));
 }
 
-//TEST_F(ElementTest, TestGlobalElementg) { testJsonExport(global->g()); }
-TEST_F(ElementTest, TestGlobalElementZ) { testJsonExport(global->Z()); }
-/*
- TEST_F(ElementTest, TestPairingG1) { testJsonExport(global->pairing()->getG1()); }
-TEST_F(ElementTest, TestPairingG2) { testJsonExport(global->pairing()->getGT()); }
-TEST_F(ElementTest, TestPairing) { testJsonExport(global->pairing()); }
+TEST_CASE("test element serialization", "[conversion][json]") {
 
-TEST_F(ElementTest, TestFirstLevelEncryption) {
-  auto kp = std::make_unique<afgh::KeyPair>(global);
-  
-  auto message1 = std::make_shared<afgh::Element>(global->pairing()->getGT());
-  message1->randomize();
-  
-  auto ciphertext = std::make_shared<afgh::Tuple>(message1, kp->getPublicKey(), global, false);
-  auto message2 = ciphertext->decryptFirstLevel(kp->getSecretKey());
-  ASSERT_EQ(*message1, *message2);
+  auto context = e2ee::PbcContext::createInstance();
+  auto global = std::make_shared<e2ee::GlobalParameters>(context, 160, 512);
+  auto dummy = std::make_unique<e2ee::KeyPair>(global);
+
+  SECTION("TestElementIdUnambiguity") {
+    using namespace boost::uuids;
+    const uuid &id = global->g()->getId();
+    const uuid &id2 = e2ee::PbcObjectImpl<struct element_s>::idOf(global->g()->get());
+    REQUIRE(id == id2);
+  }
+
+  SECTION("TestGlobalElementg") { testJsonExport(global->g()); }
+  SECTION("TestGlobalElementZ") { testJsonExport(global->Z()); }
+  SECTION("TestPairingG1") { testJsonExport(global->pairing()->G1()); }
+  SECTION("TestPairingG2") { testJsonExport(global->pairing()->G2()); }
+  SECTION("TestPairing") { testJsonExport(global->pairing()); }
+
+  SECTION("TestPublicKey") { testJsonExport(dummy->getPublicKey()); }
+  SECTION("TestSecretKey") { testJsonExport(dummy->getSecretKey()); }
 }
 
-TEST_F(ElementTest, TestSecondLevelEncryption) {
-  std::shared_ptr<afgh::KeyPair> sender = std::make_unique<afgh::KeyPair>(global);
-  std::shared_ptr<afgh::KeyPair> receiver = std::make_unique<afgh::KeyPair>(global);
-  
-  std::shared_ptr<afgh::Element> message1 = std::make_shared<afgh::Element>(global->pairing()->getGT());
-  message1->randomize();
-  
-  std::shared_ptr<afgh::Tuple> ciphertext1 = std::make_shared<afgh::Tuple>(message1, sender->getPublicKey(), global, true);
-  std::shared_ptr<afgh::Element> rk = sender->getReEncryptionKeyFor(receiver->getPublicKey());
-  std::shared_ptr<afgh::Tuple> ciphertext2 = ciphertext1->reEncrypt(rk);
-  
-  std::shared_ptr<afgh::Element> message2 = ciphertext2->decryptFirstLevel(receiver->getSecretKey());
-  ASSERT_EQ(*message1, *message2);
+void testByteExport(std::shared_ptr<e2ee::Element> obj1) {
+  auto b = obj1->toBytes();
+  auto ptr = std::dynamic_pointer_cast<e2ee::PbcSerializableField>(obj1->field());
+  REQUIRE(ptr != nullptr);
+
+  auto e = ptr->elementFromBytes(b.begin(), b.end());
+  if (!(*e == *obj1)) {
+    e = !*e;
+  }
+  REQUIRE(*e == *obj1);
 }
-*/
+
+void testByteExport(std::shared_ptr<e2ee::AbstractField> f) {
+  testByteExport(f->randomElement());
+}
+
+TEST_CASE("test binary conversion of g", "[conversion][json]") {
+  auto context = e2ee::PbcContext::createInstance();
+  auto global = std::make_shared<e2ee::GlobalParameters>(context, 160, 512);
+  auto dummy = std::make_unique<e2ee::KeyPair>(global);
+
+  testByteExport(global->g());
+}
+
+TEST_CASE("test binary conversion of pk", "[conversion][json]") {
+  auto context = e2ee::PbcContext::createInstance();
+  auto global = std::make_shared<e2ee::GlobalParameters>(context, 160, 512);
+  auto dummy = std::make_unique<e2ee::KeyPair>(global);
+
+  testByteExport(dummy->getPublicKey());
+}
+
+TEST_CASE("test binary conversion of sk", "[conversion][json]") {
+  auto context = e2ee::PbcContext::createInstance();
+  auto global = std::make_shared<e2ee::GlobalParameters>(context, 160, 512);
+  auto dummy = std::make_unique<e2ee::KeyPair>(global);
+
+  testByteExport(dummy->getSecretKey());
+
+  //testByteExport(global->pairing()->G1());
+  //testByteExport(global->pairing()->G2());
+}
+
+TEST_CASE("test binary conversion of G1", "[conversion][json]") {
+  auto context = e2ee::PbcContext::createInstance();
+  auto global = std::make_shared<e2ee::GlobalParameters>(context, 160, 512);
+  auto dummy = std::make_unique<e2ee::KeyPair>(global);
+
+  SECTION("TestReverseConversionG1") {
+    for (auto counter=0; counter<10; ++counter) {
+      testByteExport(global->pairing()->G1());
+    }
+  }
+}

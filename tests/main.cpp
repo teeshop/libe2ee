@@ -1,15 +1,31 @@
-//
-//  main.cpp
-//  AFGHCryptoTest
-//
-//  Created by Jan Starke on 29.10.18.
-//  Copyright © 2018 T-Systems. All rights reserved.
-//
-
 #include <iostream>
-#include "gtest/gtest.h"
+
+#define CATCH_CONFIG_RUNNER
+#include <catch.hpp>
+
+#if defined(__clang__) || !defined(__APPLE__)
+
+#include <aixlog.hpp>
 
 int main(int argc, char * argv[]) {
-    testing::InitGoogleTest(&argc, argv);
-    return RUN_ALL_TESTS();
+  AixLog::Log::init<AixLog::SinkCout>(
+          AixLog::Severity::trace);
+  return Catch::Session().run( argc, argv );
 }
+
+#else
+
+int main(int argc, char * argv[]) {
+  return Catch::Session().run( argc, argv );
+}
+#endif
+
+#if USE_AIXLOG
+
+
+#else
+
+
+
+#endif
+
